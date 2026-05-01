@@ -67,6 +67,30 @@ function Test-DirectoryEmpty {
     catch { return $false }
 }
 
+function Get-WinCleanerConfig {
+    param([string]$ScriptRoot)
+    $configFile = Join-Path $ScriptRoot 'config.json'
+    $defaults = [PSCustomObject]@{
+        defaultScanPaths = @('D:\')
+        ignoreNames      = @('.git', '.env')
+        ignorePaths      = @()
+    }
+    if (-not (Test-Path -LiteralPath $configFile)) { return $defaults }
+    try {
+        $cfg = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($null -eq $cfg.defaultScanPaths -or $cfg.defaultScanPaths.Count -eq 0) {
+            $cfg | Add-Member -Force -NotePropertyName defaultScanPaths -NotePropertyValue $defaults.defaultScanPaths
+        }
+        if ($null -eq $cfg.ignoreNames) { $cfg | Add-Member -Force -NotePropertyName ignoreNames -NotePropertyValue $defaults.ignoreNames }
+        if ($null -eq $cfg.ignorePaths) { $cfg | Add-Member -Force -NotePropertyName ignorePaths -NotePropertyValue $defaults.ignorePaths }
+        return $cfg
+    }
+    catch {
+        Write-Host "  WARNING: Could not parse config.json — using defaults. ($($_.Exception.Message))" -ForegroundColor Yellow
+        return $defaults
+    }
+}
+
 function New-Step3HtmlReport {
     param(
         [string]$SearchedPaths,
@@ -193,6 +217,19 @@ function Invoke-Step3 {
     Write-Host 'Please wait...'
     Write-Host ''
 
+    # ── Load config ignore list ───────────────────────────────────────────────
+    $Config      = Get-WinCleanerConfig -ScriptRoot $PSScriptRoot
+    $IgnoreNames = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@($Config.ignoreNames),
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $IgnorePaths = @($Config.ignorePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Write-Host "Ignored names : $($IgnoreNames -join ', ')" -ForegroundColor DarkGray
+    if ($IgnorePaths.Count -gt 0) {
+        Write-Host "Ignored paths : $($IgnorePaths -join ', ')" -ForegroundColor DarkGray
+    }
+    Write-Host ''
+
     # ── Scan for zero-byte files ──────────────────────────────────────────────
     $emptyFiles = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
 
@@ -203,7 +240,23 @@ function Invoke-Step3 {
             try {
                 Get-ChildItem -LiteralPath $rootPath -Recurse -Force -File -ErrorAction SilentlyContinue |
                     Where-Object { $_.Length -eq 0 } |
-                    ForEach-Object { $emptyFiles.Add($_) }
+                    ForEach-Object {
+                        $file = $_
+                        # Skip files whose name is in the ignore list
+                        if ($IgnoreNames.Contains($file.Name)) { return }
+                        # Skip files nested inside any ignored-name directory (e.g. inside .git\)
+                        $blocked = $false
+                        foreach ($n in $IgnoreNames) {
+                            if ($file.FullName -like "*\$n\*") { $blocked = $true; break }
+                        }
+                        if ($blocked) { return }
+                        # Skip files under explicitly ignored paths
+                        foreach ($ip in $IgnorePaths) {
+                            if ($file.FullName.StartsWith($ip, [System.StringComparison]::OrdinalIgnoreCase)) { $blocked = $true; break }
+                        }
+                        if ($blocked) { return }
+                        $emptyFiles.Add($file)
+                    }
             }
             catch {
                 Write-Host "  Warning: Error scanning $rootPath — $($_.Exception.Message)" -ForegroundColor Yellow
@@ -225,6 +278,18 @@ function Invoke-Step3 {
                     Sort-Object { $_.FullName.Split('\').Count } -Descending
 
                 foreach ($dir in $allDirs) {
+                    # Skip ignored names (.git, .env, etc.) and anything nested inside them
+                    if ($IgnoreNames.Contains($dir.Name)) { continue }
+                    $blocked = $false
+                    foreach ($n in $IgnoreNames) {
+                        if ($dir.FullName -like "*\$n\*") { $blocked = $true; break }
+                    }
+                    if ($blocked) { continue }
+                    foreach ($ip in $IgnorePaths) {
+                        if ($dir.FullName.StartsWith($ip, [System.StringComparison]::OrdinalIgnoreCase)) { $blocked = $true; break }
+                    }
+                    if ($blocked) { continue }
+
                     if (Test-DirectoryEmpty -Path $dir.FullName) {
                         $emptyDirs.Add($dir)
                     }

@@ -105,3 +105,5 @@ out
 release
 debug
 target
+
+.apk

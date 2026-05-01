@@ -241,7 +241,7 @@ function Invoke-Step1 {
         [string[]]@($Config.ignoreNames),
         [System.StringComparer]::OrdinalIgnoreCase
     )
-    $IgnorePaths = @($Config.ignorePaths) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $IgnorePaths = @($Config.ignorePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
     # ── Load patterns ─────────────────────────────────────────────────────────
     $patterns = Get-CleanupPatterns -File $ListFile

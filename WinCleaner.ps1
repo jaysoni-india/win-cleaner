@@ -233,6 +233,18 @@ function Show-Menu {
 # ── Entry point ────────────────────────────────────────────────────────────────
 Show-Banner
 
+# ── Commit warning ─────────────────────────────────────────────────────────────
+Write-Host '  ╔══════════════════════════════════════════════════════════╗' -ForegroundColor Yellow
+Write-Host '  ║  ⚠  DEVELOPER WARNING — READ BEFORE PROCEEDING          ║' -ForegroundColor Yellow
+Write-Host '  ║                                                          ║' -ForegroundColor Yellow
+Write-Host '  ║  Commit and push ALL your work to a remote repository    ║' -ForegroundColor Yellow
+Write-Host '  ║  BEFORE running this tool.                               ║' -ForegroundColor Yellow
+Write-Host '  ║                                                          ║' -ForegroundColor Yellow
+Write-Host '  ║  This script permanently deletes files and folders.      ║' -ForegroundColor Yellow
+Write-Host '  ║  Deletion CANNOT be undone. There is no Recycle Bin.     ║' -ForegroundColor Yellow
+Write-Host '  ╚══════════════════════════════════════════════════════════╝' -ForegroundColor Yellow
+Write-Host ''
+
 $paths = Get-SearchPaths -Provided $SearchPaths -DefaultPaths @($Config.defaultScanPaths)
 
 if ($DryRun) {
