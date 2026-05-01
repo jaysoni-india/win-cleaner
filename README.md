@@ -113,6 +113,8 @@ Items listed in `ignoreNames` or under `ignorePaths` in `config.json` are **alwa
 .\Step1-DevFolderCleanup.ps1 -CleanupListFile "C:\my-patterns.txt"
 ```
 
+![Step 1 — Dev Artifact Cleanup demo](assets/demos/step1.png)
+
 ---
 
 ### Step 2 — Duplicate File Finder
@@ -139,6 +141,8 @@ For each duplicate group you choose how to resolve it:
 .\Step2-DuplicateFinder.ps1 -SearchPaths "D:\Projects" -DryRun
 ```
 
+![Step 2 — Duplicate File Finder demo](assets/demos/step2.png)
+
 ---
 
 ### Step 3 — Empty Files & Folders Cleanup
@@ -160,6 +164,8 @@ Directories are deduplicated before deletion — only the top-level empty parent
 
 .\Step3-EmptyItemsCleanup.ps1 -SearchPaths "D:\Projects" -DryRun
 ```
+
+![Step 3 — Empty Items Cleanup demo](assets/demos/step3.png)
 
 ---
 
