@@ -56,6 +56,31 @@ function Get-FolderSize {
     catch { return 0L }
 }
 
+function Get-WinCleanerConfig {
+    param([string]$ScriptRoot)
+    $configFile = Join-Path $ScriptRoot 'config.json'
+    $defaults = [PSCustomObject]@{
+        defaultScanPaths = @('D:\')
+        ignoreNames      = @('.git', '.env')
+        ignorePaths      = @()
+    }
+    if (-not (Test-Path -LiteralPath $configFile)) { return $defaults }
+    try {
+        $cfg = Get-Content -LiteralPath $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        # Ensure all keys exist, fall back to defaults for missing ones
+        if ($null -eq $cfg.defaultScanPaths -or $cfg.defaultScanPaths.Count -eq 0) {
+            $cfg | Add-Member -Force -NotePropertyName defaultScanPaths -NotePropertyValue $defaults.defaultScanPaths
+        }
+        if ($null -eq $cfg.ignoreNames)  { $cfg | Add-Member -Force -NotePropertyName ignoreNames  -NotePropertyValue $defaults.ignoreNames }
+        if ($null -eq $cfg.ignorePaths)  { $cfg | Add-Member -Force -NotePropertyName ignorePaths  -NotePropertyValue $defaults.ignorePaths }
+        return $cfg
+    }
+    catch {
+        Write-Host "  WARNING: Could not parse config.json — using defaults. ($($_.Exception.Message))" -ForegroundColor Yellow
+        return $defaults
+    }
+}
+
 function Get-CleanupPatterns {
     param([string]$File)
     $list = @()
@@ -169,6 +194,9 @@ function Invoke-Step1 {
     Write-Host '============================================================' -ForegroundColor Cyan
     Write-Host ''
 
+    # ── Load config.json ──────────────────────────────────────────────────────
+    $Config = Get-WinCleanerConfig -ScriptRoot $PSScriptRoot
+
     # ── Resolve cleanup list ──────────────────────────────────────────────────
     if ([string]::IsNullOrWhiteSpace($ListFile)) {
         $ListFile = Join-Path $PSScriptRoot 'cleanup-list.txt'
@@ -180,10 +208,12 @@ function Invoke-Step1 {
 
     # ── Resolve search paths ──────────────────────────────────────────────────
     if ($Paths.Count -eq 0) {
-        Write-Host 'Enter search paths (comma-separated). Press ENTER for default [D:\]:' -ForegroundColor Yellow
+        $defaultPaths = @($Config.defaultScanPaths)
+        $defaultLabel = $defaultPaths -join ', '
+        Write-Host "Enter search paths (comma-separated). Press ENTER for default [$defaultLabel]:" -ForegroundColor Yellow
         $userInput = Read-Host '  Paths'
         if ([string]::IsNullOrWhiteSpace($userInput)) {
-            $Paths = @('D:\')
+            $Paths = $defaultPaths
         }
         else {
             $Paths = $userInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
@@ -204,9 +234,22 @@ function Invoke-Step1 {
         return
     }
 
+    # ── Ignore list from config.json — never deleted or reported ─────────────
+    # ignoreNames: exact folder/file names to skip (e.g. .git, .env)
+    # ignorePaths: full path prefixes/substrings to skip (e.g. C:\sensitive)
+    $IgnoreNames = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@($Config.ignoreNames),
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $IgnorePaths = @($Config.ignorePaths) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
     # ── Load patterns ─────────────────────────────────────────────────────────
     $patterns = Get-CleanupPatterns -File $ListFile
     Write-Host "Loaded $($patterns.Count) cleanup patterns." -ForegroundColor Green
+    Write-Host "Ignored names : $($IgnoreNames -join ', ')" -ForegroundColor DarkGray
+    if ($IgnorePaths.Count -gt 0) {
+        Write-Host "Ignored paths : $($IgnorePaths -join ', ')" -ForegroundColor DarkGray
+    }
     Write-Host "Searching in: $($validPaths -join ', ')" -ForegroundColor Cyan
     Write-Host 'Please wait...'
     Write-Host ''
@@ -239,6 +282,23 @@ function Invoke-Step1 {
                     }
                 }
                 if ($isNested) { continue }
+
+                # Skip names listed in config.json ignoreNames (.git, .env, etc.)
+                if ($IgnoreNames.Contains($item.Name)) { continue }
+                # Skip anything whose full path is inside an ignored-name directory
+                # (e.g. every file/folder inside any .git directory)
+                $insideIgnored = $false
+                foreach ($ignoreName in $IgnoreNames) {
+                    if ($item.FullName -like "*\$ignoreName\*") { $insideIgnored = $true; break }
+                }
+                if ($insideIgnored) { continue }
+                # Skip paths matching any entry in config.json ignorePaths
+                foreach ($ignorePath in $IgnorePaths) {
+                    if ($item.FullName.StartsWith($ignorePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $insideIgnored = $true; break
+                    }
+                }
+                if ($insideIgnored) { continue }
 
                 $matched = Resolve-MatchedPattern -Name $item.Name -Patterns $patterns
                 if ($null -ne $matched) {

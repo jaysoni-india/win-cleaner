@@ -65,6 +65,21 @@ foreach ($s in @($Step1Script, $Step2Script, $Step3Script)) {
     }
 }
 
+# ── Load config.json ───────────────────────────────────────────────────────────
+$ConfigFile = Join-Path $ScriptDir 'config.json'
+$Config = [PSCustomObject]@{ defaultScanPaths = @('D:\') }
+if (Test-Path -LiteralPath $ConfigFile) {
+    try {
+        $parsed = Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($null -ne $parsed.defaultScanPaths -and $parsed.defaultScanPaths.Count -gt 0) {
+            $Config = $parsed
+        }
+    }
+    catch {
+        Write-Host "  WARNING: Could not parse config.json — using defaults." -ForegroundColor Yellow
+    }
+}
+
 # ── Banner ─────────────────────────────────────────────────────────────────────
 function Show-Banner {
     $width = 62
@@ -85,7 +100,10 @@ function Show-Banner {
 
 # ── Path prompt ────────────────────────────────────────────────────────────────
 function Get-SearchPaths {
-    param([string[]]$Provided)
+    param(
+        [string[]]$Provided,
+        [string[]]$DefaultPaths = @('D:\')
+    )
 
     if ($Provided.Count -gt 0) {
         $valid = @()
@@ -96,12 +114,13 @@ function Get-SearchPaths {
         return $valid
     }
 
+    $defaultLabel = $DefaultPaths -join ', '
     Write-Host 'Enter one or more root paths to scan.' -ForegroundColor Yellow
-    Write-Host 'Separate multiple paths with a comma. Press ENTER for default [D:\]:' -ForegroundColor Yellow
+    Write-Host "Separate multiple paths with a comma. Press ENTER for default [$defaultLabel]:" -ForegroundColor Yellow
     $userInput = Read-Host '  Paths'
 
     if ([string]::IsNullOrWhiteSpace($userInput)) {
-        $raw = @('D:\')
+        $raw = $DefaultPaths
     }
     else {
         $raw = $userInput -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
@@ -214,7 +233,7 @@ function Show-Menu {
 # ── Entry point ────────────────────────────────────────────────────────────────
 Show-Banner
 
-$paths = Get-SearchPaths -Provided $SearchPaths
+$paths = Get-SearchPaths -Provided $SearchPaths -DefaultPaths @($Config.defaultScanPaths)
 
 if ($DryRun) {
     Write-Host ''

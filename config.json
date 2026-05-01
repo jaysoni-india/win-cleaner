@@ -1,0 +1,15 @@
+{
+  "_comment": "WinCleaner configuration — edit this file to customise behaviour",
+
+  "defaultScanPaths": [
+    "D:\\"
+  ],
+
+  "ignoreNames": [
+    ".git",
+    ".env"
+  ],
+
+  "ignorePaths": [
+  ]
+}
