@@ -63,6 +63,32 @@ function Get-FileHashSafe {
     catch { return $null }
 }
 
+function Get-HashCacheTable {
+    param([string]$CacheFile)
+    if (-not (Test-Path -LiteralPath $CacheFile)) { return @{} }
+    try {
+        $json  = Get-Content -LiteralPath $CacheFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $table = @{}
+        foreach ($prop in $json.PSObject.Properties) {
+            $table[$prop.Name] = $prop.Value
+        }
+        return $table
+    }
+    catch { return @{} }
+}
+
+function Save-HashCacheTable {
+    param([hashtable]$Cache, [string]$CacheFile)
+    try {
+        $obj = [ordered]@{}
+        foreach ($key in ($Cache.Keys | Sort-Object)) { $obj[$key] = $Cache[$key] }
+        $obj | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $CacheFile -Encoding UTF8
+    }
+    catch {
+        Write-Host "  WARNING: Could not save hash cache: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 function New-Step2HtmlReport {
     param(
         [string]$SearchedPaths,
@@ -212,6 +238,12 @@ function Invoke-Step2 {
     Write-Host 'Phase 2/2 — Computing SHA-256 hashes for candidate files...' -ForegroundColor DarkCyan
 
     # ── Phase 2: hash candidates, find true duplicates ────────────────────────
+    # Load persistent hash cache — avoids rehashing unchanged files on repeat scans
+    $cacheFile  = Join-Path $PSScriptRoot 'hash-cache.json'
+    $hashCache  = Get-HashCacheTable -CacheFile $cacheFile
+    $cacheHits  = 0
+    $cacheMisses = 0
+
     $hashMap   = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[System.IO.FileInfo]]]::new()
     $hashCount = 0
     $totalCandidates = ($bySizeGroups | ForEach-Object { $_.Count } | Measure-Object -Sum).Sum
@@ -221,12 +253,34 @@ function Invoke-Step2 {
             $hashCount++
             if ($hashCount % 50 -eq 0) {
                 Write-Progress -Activity 'Step 2 - Hashing files' `
-                    -Status "Hashed $hashCount / $totalCandidates" `
+                    -Status "Hashed $hashCount / $totalCandidates  (cache hits: $cacheHits)" `
                     -PercentComplete ([int](($hashCount / [Math]::Max($totalCandidates, 1)) * 100))
             }
 
-            $hash = Get-FileHashSafe -Path $fi.FullName
-            if ($null -eq $hash) { continue }
+            # Cache lookup: valid when path, file size and last-write time all match
+            $cacheKey = $fi.FullName
+            $fileLwt  = $fi.LastWriteTime.ToString('o')
+            $hash     = $null
+
+            if ($hashCache.ContainsKey($cacheKey)) {
+                $entry = $hashCache[$cacheKey]
+                if ([long]$entry.Size -eq $fi.Length -and $entry.LastWriteTime -eq $fileLwt) {
+                    $hash = $entry.Hash
+                    $cacheHits++
+                }
+            }
+
+            if ($null -eq $hash) {
+                $hash = Get-FileHashSafe -Path $fi.FullName
+                if ($null -eq $hash) { continue }
+                # Store in cache for future runs
+                $hashCache[$cacheKey] = [PSCustomObject]@{
+                    Hash          = $hash
+                    Size          = $fi.Length
+                    LastWriteTime = $fileLwt
+                }
+                $cacheMisses++
+            }
 
             if (-not $hashMap.ContainsKey($hash)) {
                 $hashMap[$hash] = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
@@ -236,6 +290,10 @@ function Invoke-Step2 {
     }
 
     Write-Progress -Activity 'Step 2 - Hashing files' -Completed
+
+    # Persist updated cache
+    Save-HashCacheTable -Cache $hashCache -CacheFile $cacheFile
+    Write-Host "Hash cache : $cacheHits hits / $cacheMisses computed — $cacheFile" -ForegroundColor DarkGray
 
     # Filter to groups with 2+ files (true duplicates)
     $dupGroups = $hashMap.GetEnumerator() |
@@ -330,9 +388,10 @@ function Invoke-Step2 {
     $actionableGroups = $resolvedGroups | Where-Object { $_.Resolution -ne 'S' }
     $finalWaste = 0L
     foreach ($g in $actionableGroups) {
-        $finalWaste += ($g.Files |
+        $sum = ($g.Files |
             Where-Object { $_.FullName -ne $g.KeepFile } |
             Measure-Object -Property Length -Sum).Sum
+        $finalWaste += [long]$(if ($null -eq $sum) { 0 } else { $sum })
     }
 
     Write-Host ''
