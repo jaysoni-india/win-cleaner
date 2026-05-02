@@ -2,7 +2,9 @@
   "_comment": "WinCleaner configuration — edit this file to customise behaviour",
 
   "defaultScanPaths": [
-    "D:\\"
+    "D:\\",    
+    "E:\\",
+    "F:\\"
   ],
 
   "ignoreNames": [
